@@ -175,7 +175,7 @@ extension Selector: _SelectorBackendProtocol {
     func wakeup0() throws {
         // will be called from a different thread
         let result = try self.myThread.withHandleUnderLock { handle in
-            QueueUserAPC(wakeupTarget, handle, 0)
+            QueueUserAPC(wakeupTarget, handle.raw, 0)
         }
         if result == 0 {
             let errorCode = GetLastError()

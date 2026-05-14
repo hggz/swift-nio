@@ -569,7 +569,12 @@ internal enum Posix: Sendable {
     #elseif os(Linux) || os(FreeBSD) || os(Android) || os(OpenBSD)
     static let SOL_UDP: CInt = CInt(IPPROTO_UDP)
     #elseif os(Windows)
-    static let SOL_UDP: CInt = CInt(IPPROTO_UDP)
+    // On Windows, `IPPROTO_UDP` is imported by Clang as a case of the
+    // `IPPROTO` enum (from ws2def.h), not as an integer constant. The
+    // unlabeled `CInt(_:)` initializers all require `BinaryInteger` or
+    // `BinaryFloatingPoint`, neither of which a raw enum value satisfies.
+    // Use the underlying raw value explicitly.
+    static let SOL_UDP: CInt = CInt(IPPROTO_UDP.rawValue)
     #endif
 
     #if !os(Windows)

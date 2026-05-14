@@ -18,15 +18,38 @@
 
 import WinSDK
 
+/// Sendable wrapper around the Win32 `HANDLE` used by NIO threads.
+///
+/// `HANDLE` is `UnsafeMutableRawPointer?`, which is not `Sendable`. NIO's
+/// `ThreadOps.ThreadHandle` is required to be `Sendable` (it lives inside
+/// `NIOLockedValueBox` on `NIOThread`). The raw pointer is in fact safe to
+/// share across threads — Win32 thread handles are designed for exactly
+/// that. We therefore wrap it in an `@unchecked Sendable` struct.
+struct NIOWindowsThreadHandle: @unchecked Sendable, Hashable {
+    let raw: HANDLE
+
+    init(_ raw: HANDLE) {
+        self.raw = raw
+    }
+
+    static func == (lhs: NIOWindowsThreadHandle, rhs: NIOWindowsThreadHandle) -> Bool {
+        lhs.raw == rhs.raw
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(UInt(bitPattern: raw))
+    }
+}
+
 typealias ThreadOpsSystem = ThreadOpsWindows
 enum ThreadOpsWindows: ThreadOps {
-    typealias ThreadHandle = HANDLE
+    typealias ThreadHandle = NIOWindowsThreadHandle
     typealias ThreadSpecificKey = DWORD
     typealias ThreadSpecificKeyDestructor = @convention(c) (UnsafeMutableRawPointer?) -> Void
 
     static func threadName(_ thread: ThreadOpsSystem.ThreadHandle) -> String? {
         var pszBuffer: PWSTR?
-        GetThreadDescription(thread, &pszBuffer)
+        GetThreadDescription(thread.raw, &pszBuffer)
         guard let buffer = pszBuffer else { return nil }
         let string: String = String(decodingCString: buffer, as: UTF16.self)
         LocalFree(buffer)
@@ -43,7 +66,7 @@ enum ThreadOpsWindows: ThreadOps {
         let routine: @convention(c) (UnsafeMutableRawPointer?) -> CUnsignedInt = {
             let boxed = Unmanaged<NIOThread.ThreadBox>.fromOpaque($0!).takeRetainedValue()
             let (body, name) = (boxed.value.body, boxed.value.name)
-            let hThread: ThreadOpsSystem.ThreadHandle = GetCurrentThread()
+            let hThread: HANDLE = GetCurrentThread()
 
             if let name = name {
                 _ = name.withCString(encodedAs: UTF16.self) {
@@ -51,24 +74,25 @@ enum ThreadOpsWindows: ThreadOps {
                 }
             }
 
-            body(NIOThread(handle: hThread, desiredName: name))
+            body(NIOThread(handle: NIOWindowsThreadHandle(hThread), desiredName: name))
 
             return 0
         }
         let hThread: HANDLE =
             HANDLE(bitPattern: _beginthreadex(nil, 0, routine, argv0, 0, nil))!
+        handle = NIOWindowsThreadHandle(hThread)
     }
 
     static func isCurrentThread(_ thread: ThreadOpsSystem.ThreadHandle) -> Bool {
-        CompareObjectHandles(thread, GetCurrentThread())
+        CompareObjectHandles(thread.raw, GetCurrentThread())
     }
 
     static var currentThread: ThreadOpsSystem.ThreadHandle {
-        GetCurrentThread()
+        NIOWindowsThreadHandle(GetCurrentThread())
     }
 
     static func joinThread(_ thread: ThreadOpsSystem.ThreadHandle) {
-        let dwResult: DWORD = WaitForSingleObject(thread, INFINITE)
+        let dwResult: DWORD = WaitForSingleObject(thread.raw, INFINITE)
         assert(dwResult == WAIT_OBJECT_0, "WaitForSingleObject: \(GetLastError())")
     }
 
@@ -90,7 +114,7 @@ enum ThreadOpsWindows: ThreadOps {
     }
 
     static func compareThreads(_ lhs: ThreadOpsSystem.ThreadHandle, _ rhs: ThreadOpsSystem.ThreadHandle) -> Bool {
-        CompareObjectHandles(lhs, rhs)
+        CompareObjectHandles(lhs.raw, rhs.raw)
     }
 }
 
